@@ -1,0 +1,38 @@
+name: Update zonne-forecast
+
+# Draait elke ochtend automatisch (in GitHub's cloud, dus zonder jouw pc),
+# haalt de PV-voorspelling op en zet forecast_data.js bij zodat de planner vers is.
+
+on:
+  schedule:
+    - cron: "0 5 * * *"   # 05:00 UTC = 07:00 zomertijd / 06:00 wintertijd (België)
+  workflow_dispatch:        # laat je de taak ook handmatig starten via de Actions-tab
+
+permissions:
+  contents: write           # nodig om forecast_data.js terug te committen
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repo ophalen
+        uses: actions/checkout@v4
+
+      - name: Python opzetten
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Requests installeren
+        run: pip install requests
+
+      - name: Forecast ophalen
+        run: python forecast_ophalen.py
+
+      - name: forecast_data.js bijwerken
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add forecast_data.js
+          git diff --staged --quiet || git commit -m "Update forecast $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push
