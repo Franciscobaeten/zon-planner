@@ -39,7 +39,25 @@ td.win { font-variant-numeric:tabular-nums; font-weight:600; }
 
 <script>
 function toMin(hhmm){ const p=hhmm.split(":"); return (+p[0])*60+(+p[1]); }
-function fmt(min){ return String(Math.floor(min/60)).padStart(2,"0")+":"+String(min%60).padStart(2,"0"); }
+function fmt(min){ min=Math.round(min); return String(Math.floor(min/60)).padStart(2,"0")+":"+String(min%60).padStart(2,"0"); }
+
+// Robuuste stapgrootte: mediaan van de tijdsverschillen (negeert de korte zonsopgang/-ondergang randen)
+function detectStep(labels){
+  const diffs=[];
+  for(let i=1;i<labels.length;i++) diffs.push(toMin(labels[i])-toMin(labels[i-1]));
+  if(!diffs.length) return 60;
+  diffs.sort((a,b)=>a-b);
+  return diffs[Math.floor(diffs.length/2)] || 60;
+}
+function bestWindow(watts, minutes, stepMin){
+  const n=Math.max(1, Math.round(minutes/stepMin));
+  if(n>=watts.length) return {i:0,j:watts.length-1};
+  let best=-1,bi=0;
+  for(let i=0;i+n<=watts.length;i++){ let s=0; for(let k=i;k<i+n;k++) s+=watts[k]; if(s>best){best=s;bi=i;} }
+  return {i:bi,j:bi+n-1};
+}
+// Verwachte PV-opbrengst tijdens het draaien: gemiddeld vermogen in het blok x de programmaduur
+function blockKwh(watts,i,j,minutes){ let s=0; for(let k=i;k<=j;k++) s+=watts[k]; const avg=s/(j-i+1); return avg*(minutes/60)/1000; }
 
 const app = document.getElementById("app");
 if (typeof FORECAST === "undefined" || !FORECAST.days || !FORECAST.days.length){
@@ -60,7 +78,7 @@ if (typeof FORECAST === "undefined" || !FORECAST.days || !FORECAST.days.length){
     </div>
     <div class="result" id="result"></div>
     <div class="chartbox"><canvas id="chart"></canvas></div>
-    <div class="hint">Het oranje blok is het aaneengesloten tijdvenster met de hoogste verwachte zonne-opbrengst voor de gekozen duur. Start je toestel daar, dan draait het maximaal op eigen stroom.</div>
+    <div class="hint">De oranje uren zijn het aaneengesloten venster met de hoogste verwachte zonne-opbrengst voor je gekozen duur. Start je toestel aan het begin daarvan, dan draait het maximaal op eigen stroom.</div>
   </div>
   <div class="card">
     <h2>2. Beste starttijd per programmaduur (gekozen dag)</h2>
@@ -76,26 +94,16 @@ if (typeof FORECAST === "undefined" || !FORECAST.days || !FORECAST.days.length){
     daysEl.appendChild(b);
   });
 
-  function step(day){ return day.labels.length>1 ? toMin(day.labels[1])-toMin(day.labels[0]) : 60; }
-  function bestWindow(watts, minutes, stepMin){
-    const n=Math.max(1, Math.round(minutes/stepMin));
-    if(n>=watts.length){ return {i:0,j:watts.length-1}; }
-    let best=-1, bi=0;
-    for(let i=0;i+n<=watts.length;i++){ let s=0; for(let k=i;k<i+n;k++) s+=watts[k]; if(s>best){best=s;bi=i;} }
-    return {i:bi,j:bi+n-1};
-  }
-  function kwhOf(watts,i,j,stepMin){ let s=0; for(let k=i;k<=j;k++) s+=watts[k]; return s*(stepMin/60)/1000; }
-
   function render(){
-    const d=FORECAST.days[curDay], w=d.watts, st=step(d);
+    const d=FORECAST.days[curDay], w=d.watts, st=detectStep(d.labels);
     const bw=bestWindow(w,curMin,st);
     const colors=w.map((_,idx)=> (idx>=bw.i&&idx<=bw.j)?"#f59e0b":"rgba(42,157,143,0.45)");
-    const startL=d.labels[bw.i];
-    const endL=fmt(toMin(d.labels[bw.j])+st);
-    const blockKwh=kwhOf(w,bw.i,bw.j,st);
+    const startMin=toMin(d.labels[bw.i]);
+    const endL=fmt(startMin+curMin);
+    const kwh=blockKwh(w,bw.i,bw.j,curMin);
     document.getElementById("result").innerHTML =
-      "Beste moment om te starten: <span class='big'>"+startL+"</span> &nbsp;(blok "+startL+"–"+endL+")<br>"+
-      "<b>Verwachte eigen zonne-opbrengst in dit blok: "+blockKwh.toFixed(1)+" kWh</b> &nbsp;·&nbsp; dagtotaal "+d.kwh.toFixed(1)+" kWh, piek "+d.wattpiek+" W";
+      "Beste moment om te starten: <span class='big'>"+d.labels[bw.i]+"</span> &nbsp;(draaien "+d.labels[bw.i]+"–"+endL+")<br>"+
+      "<b>Verwachte eigen zonne-opbrengst in dit blok: "+kwh.toFixed(1)+" kWh</b> &nbsp;·&nbsp; dagtotaal "+d.kwh.toFixed(1)+" kWh, piek "+d.wattpiek+" W";
     if(!chart){
       chart=new Chart(document.getElementById("chart"),{ type:"bar",
         data:{labels:d.labels, datasets:[{label:"Verwachte PV (W)", data:w, backgroundColor:colors, borderWidth:0, categoryPercentage:1.0, barPercentage:1.0}]},
@@ -104,9 +112,9 @@ if (typeof FORECAST === "undefined" || !FORECAST.days || !FORECAST.days.length){
     } else { chart.data.labels=d.labels; chart.data.datasets[0].data=w; chart.data.datasets[0].backgroundColor=colors; chart.update(); }
     const presets=[45,60,90,120,180];
     document.getElementById("tbl").innerHTML=presets.map(p=>{
-      const b=bestWindow(w,p,st); const s=d.labels[b.i]; const e=fmt(toMin(d.labels[b.j])+st);
+      const b=bestWindow(w,p,st); const s=d.labels[b.i]; const e=fmt(toMin(d.labels[b.i])+p);
       const lbl=p<60?p+" min":(p%60?Math.floor(p/60)+" u "+(p%60):p/60+" u");
-      return "<tr><td>"+lbl+"</td><td class='win'>"+s+"–"+e+"</td><td>"+kwhOf(w,b.i,b.j,st).toFixed(1)+" kWh</td></tr>";
+      return "<tr><td>"+lbl+"</td><td class='win'>"+s+"–"+e+"</td><td>"+blockKwh(w,b.i,b.j,p).toFixed(1)+" kWh</td></tr>";
     }).join("");
   }
   document.querySelectorAll("button.opt").forEach(b=> b.onclick=()=>{ document.querySelectorAll("button.opt").forEach(x=>x.classList.remove("active")); b.classList.add("active"); curMin=+b.dataset.min; document.getElementById("cust").value=""; render(); });
