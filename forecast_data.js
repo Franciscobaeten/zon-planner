@@ -1,6 +1,6 @@
 // Automatisch gegenereerd door forecast_ophalen.py — niet handmatig aanpassen
 const FORECAST = {
-  "updated": "2026-09-11 08:45",
+  "updated": "2026-09-11 09:16",
   "days": [
     {
       "naam": "Vandaag (2026-09-11)",
